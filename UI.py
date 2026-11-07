@@ -9,7 +9,7 @@ from tkinter import ttk, filedialog, messagebox
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Tuple, TypedDict
+from typing import Dict, List, Optional, TypedDict
 
 import numpy as np
 from scipy.optimize import milp, LinearConstraint, Bounds
