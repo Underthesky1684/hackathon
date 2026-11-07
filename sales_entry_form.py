@@ -2,7 +2,6 @@ import calendar
 import argparse
 import csv
 import os
-import sys
 import tkinter as tk
 import tkinter.font as tkfont
 from datetime import date, datetime
