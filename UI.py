@@ -1,5 +1,8 @@
 import csv
 import os
+import sys
+import subprocess
+import tempfile
 import tkinter as tk
 import tkinter.font as tkfont
 from tkinter import ttk, filedialog, messagebox
@@ -316,12 +319,13 @@ class CSVViewerApp:
         self.product_entries: list[ProductEntry] = []
         self.last_result: OptimizationResult | None = None
         self._sort_state: dict[tuple[int, str], bool] = {}
+        self._entry_proc = None
+        self._callback_file: Optional[str] = None
 
         self._setup_style()
         self._build_widgets()
         self._bind_shortcuts()
 
-    # ------------------------------------------------------------------ style
     def _setup_style(self):
         root = self.root
         root.configure(bg=T.BG)
@@ -401,7 +405,6 @@ class CSVViewerApp:
                             borderwidth=0, arrowcolor=T.MUTED)
             style.map(f"{orient}.TScrollbar", background=[("active", "#AEB7C4")])
 
-    # ---------------------------------------------------------------- helpers
     def _card(self, parent, title: Optional[str] = None, subtitle: Optional[str] = None):
         """White bordered panel. Returns (outer, content, header_row)."""
         outer = tk.Frame(parent, bg=T.SURFACE, highlightbackground=T.BORDER, highlightthickness=1)
@@ -480,7 +483,6 @@ class CSVViewerApp:
         entry.bind("<Key>", self._reset_invalid, add="+")
         entry.bind("<FocusIn>", self._select_all_later, add="+")
 
-    # ----------------------------------------------------------------- layout
     def _build_widgets(self):
         self._build_header()
         self._build_status_bar()
@@ -516,6 +518,8 @@ class CSVViewerApp:
 
         right = tk.Frame(inner, bg=T.HEADER_BG)
         right.pack(side="right")
+        ttk.Button(right, text="New Entry   Ctrl+N", style="Header.TButton",
+                   command=self.open_entry_form).pack(side="right", padx=(8, 0))
         ttk.Button(right, text="Open CSV…   Ctrl+O", style="Header.TButton",
                    command=self.browse_file).pack(side="right")
         self.lbl_path = tk.Label(right, text="No file selected", fg=T.HEADER_MUTED,
@@ -532,7 +536,6 @@ class CSVViewerApp:
                  anchor="w").pack(side="left", fill="x", expand=True)
         self.set_status("Ready - open a CSV file to begin.")
 
-    # --------------------------------------------------------------- raw tab
     def _build_raw_tab(self):
         card, content, head = self._card(self.tab_raw, "Sales history")
         card.pack(fill="both", expand=True)
@@ -550,7 +553,6 @@ class CSVViewerApp:
         )
         self.raw_empty.place(relx=0.5, rely=0.45, anchor="center")
 
-    # ------------------------------------------------------------ config tab
     def _build_config_tab(self):
         card, content, _ = self._card(self.tab_config, "Constraints",
                                       "Limits and risk preferences for the optimizer")
@@ -637,7 +639,6 @@ class CSVViewerApp:
             step = -1 if event.delta > 0 else 1
         self.prod_canvas.yview_scroll(step, "units")
 
-    # ------------------------------------------------------------ result tab
     def _build_result_tab(self):
         summary = ttk.Frame(self.tab_result)
         summary.pack(fill="x")
@@ -668,11 +669,56 @@ class CSVViewerApp:
         )
         self.result_empty.place(relx=0.5, rely=0.45, anchor="center")
 
-    # ---------------------------------------------------------------- actions
     def _bind_shortcuts(self):
         self.root.bind("<Control-o>", lambda e: self.browse_file())
+        self.root.bind("<Control-n>", lambda e: self.open_entry_form())
         self.root.bind("<F5>", lambda e: self.run_optimization())
         self.root.bind("<Control-Return>", lambda e: self.run_optimization())
+
+    def open_entry_form(self):
+        if self._entry_proc is not None:
+            poll = getattr(self._entry_proc, "poll", None)
+            if poll and poll() is None:
+                self.set_status("Sales entry form is already open.")
+                return
+        entry_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sales_entry_form.py")
+        if not os.path.exists(entry_script):
+            messagebox.showerror("Error", f"Cannot find sales_entry_form.py at:\n{entry_script}")
+            return
+        fd, self._callback_file = tempfile.mkstemp(suffix=".txt", prefix="optimarket_cb_")
+        os.close(fd)
+        with open(self._callback_file, "w") as f:
+            f.write("")
+        self._entry_proc = subprocess.Popen([sys.executable, entry_script, "--callback", self._callback_file])
+        self.set_status("Sales entry form opened - save a CSV there to load it here automatically.")
+        self.root.after(1000, self._poll_entry_form)
+
+    def _poll_entry_form(self):
+        if self._entry_proc is None:
+            return
+        rc = self._entry_proc.poll()
+        loaded = False
+        if self._callback_file and os.path.exists(self._callback_file):
+            with open(self._callback_file, "r") as f:
+                content = f.read().strip()
+            if content:
+                self._callback_file = None
+                self._entry_proc = None
+                self.load_csv(content)
+                loaded = True
+        if loaded:
+            return
+        if rc is not None:
+            try:
+                if self._callback_file:
+                    os.unlink(self._callback_file)
+            except OSError:
+                pass
+            self._callback_file = None
+            self._entry_proc = None
+            self.set_status("Sales entry form closed without saving.", "info")
+            return
+        self.root.after(1000, self._poll_entry_form)
 
     def browse_file(self):
         path = filedialog.askopenfilename(
@@ -769,7 +815,6 @@ class CSVViewerApp:
         self._populate_product_config()
         self.set_status("Values reset to defaults and the latest forecast.")
 
-    # ------------------------------------------------------------- validation
     @staticmethod
     def _read_number(widget: ttk.Entry, label: str, cast=int, minimum=None, maximum=None, empty=None):
         text = widget.get().strip().replace(" ", "")
@@ -858,7 +903,6 @@ class CSVViewerApp:
             "success",
         )
 
-    # ---------------------------------------------------------------- results
     def _clear_results(self):
         self.last_result = None
         self.tree_result.delete(*self.tree_result.get_children())
@@ -890,7 +934,7 @@ class CSVViewerApp:
             tags = []
             if i % 2:
                 tags.append("odd")
-            if row["Perkiraan Laba (Rp)"] < 0:
+            if isinstance(row["Perkiraan Laba (Rp)"], (int, float)) and row["Perkiraan Laba (Rp)"] < 0:
                 tags.append("loss")
             tree.insert("", "end", values=[self._format_cell(c, row[c]) for c in cols], tags=tags)
         self.result_empty.place_forget()
