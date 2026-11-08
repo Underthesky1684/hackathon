@@ -699,9 +699,9 @@ class CSVViewerApp:
             if poll and poll() is None:
                 self.set_status("Formulir input penjualan sudah terbuka.")
                 return
-        entry_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sales_entry_form1.py")
+        entry_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sales_entry_form-id.py")
         if not os.path.exists(entry_script):
-            messagebox.showerror("Kesalahan", f"Tidak dapat menemukan sales_entry_form1.py di:\n{entry_script}")
+            messagebox.showerror("Kesalahan", f"Tidak dapat menemukan sales_entry_form-id.py di:\n{entry_script}")
             return
         fd, self._callback_file = tempfile.mkstemp(suffix=".txt", prefix="optimarket_cb_")
         os.close(fd)
